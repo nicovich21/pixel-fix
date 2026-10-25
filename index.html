@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pixel Fix · píxeles 1x1 reales</title>
+<style>
+:root{--bg:#fafaf7;--panel:#ffffff;--text:#1d1d1b;--muted:#6b6b66;--line:#dcdcd4;--accent:#2f6fed;--accent-t:#ffffff;--chk1:#e9e9e2;--chk2:#f6f6f1;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#151514;--panel:#1f1f1d;--text:#ecece6;--muted:#9a9a92;--line:#33332f;--accent:#6b9bff;--accent-t:#0e1a33;--chk1:#2a2a27;--chk2:#232321;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#151514;--panel:#1f1f1d;--text:#ecece6;--muted:#9a9a92;--line:#33332f;--accent:#6b9bff;--accent-t:#0e1a33;--chk1:#2a2a27;--chk2:#232321;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:1.5rem;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 20px}
+#drop{border:2px dashed var(--line);border-radius:14px;background:var(--panel);padding:32px 16px;text-align:center;cursor:pointer;transition:border-color .15s}
+#drop:hover,#drop.over,#drop:focus-visible{border-color:var(--accent);outline:none}
+#drop b{display:block;font-size:1.05rem}
+#drop span{color:var(--muted);font-size:.9rem}
+.opts{display:flex;flex-wrap:wrap;gap:16px 24px;align-items:flex-end;margin:18px 0}
+.opts label{display:flex;flex-direction:column;gap:4px;font-size:.85rem;color:var(--muted)}
+.opts .inline{flex-direction:row;align-items:center;gap:8px;color:var(--text)}
+input[type=number],select{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;width:110px}
+input:disabled{opacity:.5}
+button{font:inherit;background:var(--accent);color:var(--accent-t);border:0;border-radius:8px;padding:8px 14px;cursor:pointer}
+button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:16px}
+.card header{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin-bottom:10px}
+.card header .info{color:var(--muted);font-size:.85rem;flex:1;min-width:200px}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+figure{margin:0;overflow-x:auto}
+figcaption{font-size:.8rem;color:var(--muted);margin-bottom:6px}
+.orig{max-width:100%;max-height:420px;border-radius:6px;display:block}
+.res{image-rendering:pixelated;max-width:100%;height:auto;display:block;border-radius:2px;background:repeating-conic-gradient(var(--chk1) 0 25%,var(--chk2) 0 50%) 0 0/16px 16px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+#status{color:var(--muted);font-size:.9rem;min-height:1.4em}
+</style>
+</head>
+<body>
+<main>
+  <h1>Pixel Fix</h1>
+  <p class="sub">Convierte pixel art generado por IA (píxeles falsos, borrosos o irregulares) en imágenes con píxeles reales de 1x1. Todo se procesa en tu navegador.</p>
+
+  <div id="drop" tabindex="0" role="button" aria-label="Elegir imágenes">
+    <b>Arrastra tus imágenes aquí o toca para elegirlas</b>
+    <span>PNG, JPG, WebP · varias a la vez · o pega una imagen con Ctrl+V</span>
+    <input id="file" type="file" accept="image/*" multiple hidden>
+  </div>
+
+  <div class="opts">
+    <label class="inline"><input id="manual" type="checkbox"> Tamaño de celda manual</label>
+    <label>px por píxel real<input id="step" type="number" min="1" step="0.01" value="8" disabled></label>
+    <label>Reducir colores (0 = no)<input id="colors" type="number" min="0" max="256" step="1" value="0"></label>
+    <label>Desfase X (px)<input id="offx" type="number" step="0.5" value="0"></label>
+    <label>Desfase Y (px)<input id="offy" type="number" step="0.5" value="0"></label>
+    <label class="inline"><input id="grid" type="checkbox"> Mostrar cuadrícula detectada sobre el original</label>
+    <label>Zoom de vista previa
+      <select id="zoom"><option value="0">Auto</option><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option><option>32</option></select>
+    </label>
+  </div>
+  <div id="status"></div>
+  <div id="list"></div>
+</main>
+
+<script>
+/*CORE*/
+function profiles(d,w,h){
+  const g=new Float32Array(w*h);
+  for(let i=0,p=0;i<g.length;i++,p+=4)g[i]=(d[p]+d[p+1]+d[p+2])/3;
+  const dx=new Float32Array(Math.max(w-1,0)),dy=new Float32Array(Math.max(h-1,0));
+  for(let y=0;y<h;y++){const r=y*w;for(let x=0;x<w-1;x++)dx[x]+=Math.abs(g[r+x+1]-g[r+x]);}
+  for(let y=0;y<h-1;y++){const r=y*w;for(let x=0;x<w;x++)dy[y]+=Math.abs(g[r+w+x]-g[r+x]);}
+  return [dx,dy];
+}
+function comb(p,s,o){let sum=0,n=0;for(let x=o;x<p.length;x+=s){let i=Math.round(x);if(i>=p.length)i=p.length-1;sum+=p[i];n++}return n?sum/n:0}
+function detect(p){
+  let mean=0;for(const v of p)mean+=v;mean=mean/(p.length||1)+1e-9;
+  const maxS=Math.min(64,p.length/4),best=[];let top=0;
+  for(let s=2;s<maxS;s+=0.05){let bo=0,bs=-1;for(let o=0;o<s;o+=0.25){const sc=comb(p,s,o)/mean;if(sc>bs){bs=sc;bo=o}}best.push([s,bo,bs]);if(bs>top)top=bs}
+  for(const [s,o,sc] of best){
+    if(sc<0.85*top)continue;
+    let f=s,fo=o,fsc=-1;
+    for(let ff=s-0.05;ff<s+0.05;ff+=0.005)for(let oo=Math.max(0,o-0.5);oo<o+0.5;oo+=0.1){const v=comb(p,ff,oo)/mean;if(v>fsc){fsc=v;f=ff;fo=oo}}
+    const L=p.length+1,n0=Math.max(1,Math.round(L/f));let bf=f,bo=fo,bsc=-1;
+    for(let n=Math.max(1,n0-2);n<=n0+2;n++){const f2=L/n;for(let o2=0;o2<f2;o2+=0.1){const v=comb(p,f2,o2)/mean;if(v>bsc){bsc=v;bf=f2;bo=o2}}}
+    if(bsc>=0.85*fsc)return [bf,bo];
+    return [f,((fo%f)+f)%f];
+  }
+  return [1,0];
+}
+function bounds(len,step,off){
+  const raw=[0];let k=0;
+  for(;;k++){const b=Math.round(off+k*step);if(b>=len)break;if(b>raw[raw.length-1])raw.push(b)}
+  raw.push(len);
+  const out=[raw[0]];
+  for(const b of raw.slice(1)){
+    if(b-out[out.length-1]>=step*0.5||(b===len&&out.length===1))out.push(b);
+    else if(b===len)out[out.length-1]=len;
+  }
+  if(out[out.length-1]!==len)out.push(len);
+  return out;
+}
+function sample(d,w,h,xb,yb){
+  const cw=xb.length-1,ch=yb.length-1,out=new Uint8ClampedArray(cw*ch*4),buf=[[],[],[],[]];
+  for(let j=0;j<ch;j++){
+    const y0=yb[j],y1=yb[j+1],my=Math.floor((y1-y0)*0.3);
+    for(let i=0;i<cw;i++){
+      const x0=xb[i],x1=xb[i+1],mx=Math.floor((x1-x0)*0.3);
+      const ya=y0+my,yz=Math.min(h,Math.max(y1-my,ya+1)),xa=x0+mx,xz=Math.min(w,Math.max(x1-mx,xa+1));
+      for(const b of buf)b.length=0;
+      for(let y=ya;y<yz;y++)for(let x=xa;x<xz;x++){const p=(y*w+x)*4;for(let c=0;c<4;c++)buf[c].push(d[p+c])}
+      const o=(j*cw+i)*4;
+      for(let c=0;c<4;c++){const b=buf[c].sort((a,z)=>a-z),m=b.length;out[o+c]=m%2?b[(m-1)>>1]:(b[m/2-1]+b[m/2])/2}
+      out[o+3]=out[o+3]>=128?255:0;
+    }
+  }
+  return {data:out,w:cw,h:ch};
+}
+function quantize(px,n){
+  const idx=[];for(let i=0;i<px.length;i+=4)if(px[i+3]>0)idx.push(i);
+  if(!idx.length||n<1)return;
+  const boxes=[idx];
+  while(boxes.length<n){
+    let bi=-1,bc=0,br=0;
+    boxes.forEach((b,k)=>{if(b.length<2)return;for(let c=0;c<3;c++){let lo=255,hi=0;for(const i of b){const v=px[i+c];if(v<lo)lo=v;if(v>hi)hi=v}if(hi-lo>br){br=hi-lo;bi=k;bc=c}}});
+    if(bi<0)break;
+    const b=boxes[bi].sort((x,y)=>px[x+bc]-px[y+bc]),m=b.length>>1;
+    boxes.splice(bi,1,b.slice(0,m),b.slice(m));
+  }
+  for(const b of boxes){let r=0,g=0,l=0;for(const i of b){r+=px[i];g+=px[i+1];l+=px[i+2]}const k=b.length;r=Math.round(r/k);g=Math.round(g/k);l=Math.round(l/k);for(const i of b){px[i]=r;px[i+1]=g;px[i+2]=l}}
+}
+/*ENDCORE*/
+
+const $=s=>document.querySelector(s);
+const items=[];
+const list=$('#list'),status=$('#status');
+
+function fmt(n){return n.toFixed(2)}
+function autoZoom(w,h){return Math.min(32,Math.max(1,Math.floor(420/Math.max(w,h))))}
+function curZoom(it){const z=+$('#zoom').value;return z||autoZoom(it.res.w,it.res.h)}
+
+function process(it){
+  const manual=$('#manual').checked,ms=parseFloat($('#step').value);
+  let sx,ox,sy,oy;
+  if(manual&&ms>=1){sx=sy=ms;ox=oy=0}
+  else{
+    if(!it.grid){const [dx,dy]=profiles(it.px,it.w,it.h);it.grid=[detect(dx),detect(dy)]}
+    [[sx,ox],[sy,oy]]=it.grid;
+  }
+  const nx=parseFloat($('#offx').value)||0,ny=parseFloat($('#offy').value)||0;
+  const xb=bounds(it.w,sx,ox+0.5+nx),yb=bounds(it.h,sy,oy+0.5+ny);
+  it.xb=xb;it.yb=yb;
+  const res=sample(it.px,it.w,it.h,xb,yb);
+  const n=parseInt($('#colors').value)||0;
+  if(n>0)quantize(res.data,n);
+  it.res=res;it.cell=[sx,sy];
+}
+
+function draw(it){
+  const {w,h,data}=it.res,c=it.canvas;
+  c.width=w;c.height=h;
+  c.getContext('2d').putImageData(new ImageData(data,w,h),0,0);
+  const z=curZoom(it);
+  c.style.width=(w*z)+'px';
+  it.info.textContent=it.w+'×'+it.h+' → '+w+'×'+h+' px · celda ≈ '+fmt(it.cell[0])+' × '+fmt(it.cell[1])+' px';
+  it.dz.textContent='Descargar ampliado ×'+z;drawOrig(it);
+}
+
+function drawOrig(it){
+  const c=it.ocv;c.width=it.w;c.height=it.h;
+  const g=c.getContext('2d');g.drawImage(it.img,0,0);
+  if(!$('#grid').checked||!it.xb)return;
+  g.strokeStyle='rgba(255,40,100,.75)';g.lineWidth=Math.max(1,Math.min(it.w,it.h)/300);
+  g.beginPath();
+  for(const x of it.xb){g.moveTo(x,0);g.lineTo(x,it.h)}
+  for(const y of it.yb){g.moveTo(0,y);g.lineTo(it.w,y)}
+  g.stroke();
+}
+
+async function processAll(){
+  status.textContent='Procesando…';
+  for(const it of items){
+    await new Promise(r=>setTimeout(r,0));
+    try{process(it);draw(it)}catch(e){it.info.textContent='Error: '+e.message}
+  }
+  status.textContent=items.length?'Listo.':'';
+}
+
+function save(canvas,name){
+  canvas.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)},'image/png');
+}
+
+function addCard(it){
+  const el=document.createElement('article');el.className='card';
+  el.innerHTML='<header><strong></strong><span class="info"></span><button class="ghost x">Quitar</button></header>'+
+  '<div class="cols"><figure><figcaption>Original</figcaption><canvas class="orig"></canvas></figure>'+
+  '<figure><figcaption>Resultado con píxeles 1x1</figcaption><canvas class="res"></canvas></figure></div>'+
+  '<div class="actions"><button class="cp">Copiar al portapapeles</button><button class="d1 ghost">Descargar PNG 1x1</button><button class="dz"></button></div>';
+  el.querySelector('strong').textContent=it.name;
+  it.ocv=el.querySelector('.orig');
+  it.el=el;it.canvas=el.querySelector('canvas');it.info=el.querySelector('.info');it.dz=el.querySelector('.dz');
+  const base=it.name.replace(/\.[^.]+$/,'');
+  el.querySelector('.d1').onclick=()=>save(it.canvas,base+'_1x1.png');
+  el.querySelector('.cp').onclick=async()=>{try{const b=await new Promise(r=>it.canvas.toBlob(r,'image/png'));await navigator.clipboard.write([new ClipboardItem({'image/png':b})]);status.textContent='Copiada: pégala donde la necesites (Ctrl+V).'}catch(e){status.textContent='Tu navegador no permitió copiar; usa Descargar.'}};
+  it.dz.onclick=()=>{const z=curZoom(it),c=document.createElement('canvas');c.width=it.res.w*z;c.height=it.res.h*z;const g=c.getContext('2d');g.imageSmoothingEnabled=false;g.drawImage(it.canvas,0,0,c.width,c.height);save(c,base+'_x'+z+'.png')};
+  el.querySelector('.x').onclick=()=>{items.splice(items.indexOf(it),1);URL.revokeObjectURL(it.url);el.remove()};
+  list.appendChild(el);
+}
+
+function addFiles(files){
+  const jobs=[...files].filter(f=>f.type.startsWith('image/')).map(f=>new Promise(res=>{
+    const url=URL.createObjectURL(f),img=new Image();
+    img.onload=()=>{
+      const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;
+      const g=c.getContext('2d');g.drawImage(img,0,0);
+      const it={name:f.name,url,img,w:c.width,h:c.height,px:g.getImageData(0,0,c.width,c.height).data};
+      items.push(it);addCard(it);res();
+    };
+    img.onerror=()=>{status.textContent='No se pudo leer '+f.name;res()};
+    img.src=url;
+  }));
+  Promise.all(jobs).then(processAll);
+}
+
+const drop=$('#drop'),fileIn=$('#file');
+drop.addEventListener('click',()=>fileIn.click());
+drop.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fileIn.click()}});
+['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',e=>addFiles(e.dataTransfer.files));
+fileIn.addEventListener('change',()=>{addFiles(fileIn.files);fileIn.value=''});
+
+let tm;const later=()=>{clearTimeout(tm);tm=setTimeout(processAll,250)};
+$('#manual').addEventListener('change',()=>{$('#step').disabled=!$('#manual').checked;later()});
+$('#step').addEventListener('input',later);
+$('#colors').addEventListener('input',later);
+$('#offx').addEventListener('input',later);
+$('#offy').addEventListener('input',later);
+$('#grid').addEventListener('change',()=>items.forEach(it=>it.res&&drawOrig(it)));
+document.addEventListener('paste',e=>{const fs=[...((e.clipboardData&&e.clipboardData.files)||[])];if(fs.length){e.preventDefault();addFiles(fs)}});
+$('#zoom').addEventListener('change',()=>items.forEach(it=>it.res&&draw(it)));
+</script>
+</body>
+</html>
