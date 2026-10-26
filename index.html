@@ -51,6 +51,7 @@ figcaption{font-size:.8rem;color:var(--muted);margin-bottom:6px}
     <label class="inline"><input id="manual" type="checkbox"> Tamaño de celda manual</label>
     <label>px por píxel real<input id="step" type="number" min="1" step="0.01" value="8" disabled></label>
     <label>Reducir colores (0 = no)<input id="colors" type="number" min="0" max="256" step="1" value="0"></label>
+    <label>Ancho final en px (0 = auto)<input id="tw" type="number" min="0" step="1" value="0"></label>
     <label>Desfase X (px)<input id="offx" type="number" step="0.5" value="0"></label>
     <label>Desfase Y (px)<input id="offy" type="number" step="0.5" value="0"></label>
     <label class="inline"><input id="grid" type="checkbox"> Mostrar cuadrícula detectada sobre el original</label>
@@ -73,18 +74,21 @@ function profiles(d,w,h){
   return [dx,dy];
 }
 function comb(p,s,o){let sum=0,n=0;for(let x=o;x<p.length;x+=s){let i=Math.round(x);if(i>=p.length)i=p.length-1;sum+=p[i];n++}return n?sum/n:0}
-function detect(p){
+function detect(p,fixedStep){
   let mean=0;for(const v of p)mean+=v;mean=mean/(p.length||1)+1e-9;
-  const maxS=Math.min(64,p.length/4),best=[];let top=0;
-  for(let s=2;s<maxS;s+=0.05){let bo=0,bs=-1;for(let o=0;o<s;o+=0.25){const sc=comb(p,s,o)/mean;if(sc>bs){bs=sc;bo=o}}best.push([s,bo,bs]);if(bs>top)top=bs}
-  for(const [s,o,sc] of best){
-    if(sc<0.85*top)continue;
-    let f=s,fo=o,fsc=-1;
-    for(let ff=s-0.05;ff<s+0.05;ff+=0.005)for(let oo=Math.max(0,o-0.5);oo<o+0.5;oo+=0.1){const v=comb(p,ff,oo)/mean;if(v>fsc){fsc=v;f=ff;fo=oo}}
-    const L=p.length+1,n0=Math.max(1,Math.round(L/f));let bf=f,bo=fo,bsc=-1;
-    for(let n=Math.max(1,n0-2);n<=n0+2;n++){const f2=L/n;for(let o2=0;o2<f2;o2+=0.1){const v=comb(p,f2,o2)/mean;if(v>bsc){bsc=v;bf=f2;bo=o2}}}
-    if(bsc>=0.85*fsc)return [bf,bo];
-    return [f,((fo%f)+f)%f];
+  const adj=(st,o)=>{const sc=comb(p,st,o)/mean,n=p.length/st;return 1+(sc-1)*n/(n+10)};
+  const bestOff=(st,res)=>{let bo=0,bs=-1e9;for(let o=0;o<st;o+=res){const v=adj(st,o);if(v>bs){bs=v;bo=o}}return [bo,bs]};
+  if(fixedStep)return [fixedStep,bestOff(fixedStep,0.1)[0]];
+  const maxS=Math.min(64,p.length/8),best=[];let top=-1e9;
+  for(let st=2;st<maxS;st+=0.05){const [o,v]=bestOff(st,0.25);best.push([st,o,v]);if(v>top)top=v}
+  if(top<1.02)return [1,0];
+  for(const [st,o,v] of best){
+    if(v<1+0.85*(top-1))continue;
+    let f=st,fo=o,fsc=-1e9;
+    for(let ff=st-0.05;ff<st+0.05;ff+=0.005)for(let oo=Math.max(0,o-0.5);oo<o+0.5;oo+=0.1){const w=adj(ff,oo);if(w>fsc){fsc=w;f=ff;fo=oo}}
+    const L=p.length+1,n0=Math.max(1,Math.round(L/f));let sf=f,so=fo,ssc=-1e9;
+    for(let n=Math.max(1,n0-2);n<=n0+2;n++){const f2=L/n,[o2,w]=bestOff(f2,0.1);if(w>ssc){ssc=w;sf=f2;so=o2}}
+    return ssc>=1+0.85*(fsc-1)?[sf,so]:[f,((fo%f)+f)%f];
   }
   return [1,0];
 }
@@ -144,8 +148,10 @@ function process(it){
   let sx,ox,sy,oy;
   if(manual&&ms>=1){sx=sy=ms;ox=oy=0}
   else{
-    if(!it.grid){const [dx,dy]=profiles(it.px,it.w,it.h);it.grid=[detect(dx),detect(dy)]}
-    [[sx,ox],[sy,oy]]=it.grid;
+    const tw=parseInt($('#tw').value)||0;
+    if(!it.prof)it.prof=profiles(it.px,it.w,it.h);
+    if(tw>0){const st=it.w/tw;[[sx,ox],[sy,oy]]=[detect(it.prof[0],st),detect(it.prof[1],st)]}
+    else{if(!it.grid)it.grid=[detect(it.prof[0]),detect(it.prof[1])];[[sx,ox],[sy,oy]]=it.grid}
   }
   const nx=parseFloat($('#offx').value)||0,ny=parseFloat($('#offy').value)||0;
   const xb=bounds(it.w,sx,ox+0.5+nx),yb=bounds(it.h,sy,oy+0.5+ny);
@@ -198,7 +204,7 @@ function addCard(it){
   '<div class="actions"><button class="cp">Copiar al portapapeles</button><button class="d1 ghost">Descargar PNG 1x1</button><button class="dz"></button></div>';
   el.querySelector('strong').textContent=it.name;
   it.ocv=el.querySelector('.orig');
-  it.el=el;it.canvas=el.querySelector('canvas');it.info=el.querySelector('.info');it.dz=el.querySelector('.dz');
+  it.el=el;it.canvas=el.querySelector('canvas.res');it.info=el.querySelector('.info');it.dz=el.querySelector('.dz');
   const base=it.name.replace(/\.[^.]+$/,'');
   el.querySelector('.d1').onclick=()=>save(it.canvas,base+'_1x1.png');
   el.querySelector('.cp').onclick=async()=>{try{const b=await new Promise(r=>it.canvas.toBlob(r,'image/png'));await navigator.clipboard.write([new ClipboardItem({'image/png':b})]);status.textContent='Copiada: pégala donde la necesites (Ctrl+V).'}catch(e){status.textContent='Tu navegador no permitió copiar; usa Descargar.'}};
@@ -234,6 +240,7 @@ let tm;const later=()=>{clearTimeout(tm);tm=setTimeout(processAll,250)};
 $('#manual').addEventListener('change',()=>{$('#step').disabled=!$('#manual').checked;later()});
 $('#step').addEventListener('input',later);
 $('#colors').addEventListener('input',later);
+$('#tw').addEventListener('input',later);
 $('#offx').addEventListener('input',later);
 $('#offy').addEventListener('input',later);
 $('#grid').addEventListener('change',()=>items.forEach(it=>it.res&&drawOrig(it)));
