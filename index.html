@@ -55,6 +55,10 @@ figcaption{font-size:.8rem;color:var(--muted);margin-bottom:6px}
     <label>Desfase X (px)<input id="offx" type="number" step="0.5" value="0"></label>
     <label>Desfase Y (px)<input id="offy" type="number" step="0.5" value="0"></label>
     <label class="inline"><input id="grid" type="checkbox"> Mostrar cuadrícula detectada sobre el original</label>
+    <label>Paleta<select id="pal" style="width:150px"><option value="">Sin paleta</option><option value="gb">Game Boy (4)</option><option value="pico">PICO-8 (16)</option><option value="sweet">Sweetie 16</option></select></label>
+    <label>Tolerancia de color<input id="tol" type="number" min="0" max="120" step="1" value="24"></label>
+    <label class="inline"><input id="clean" type="checkbox"> Limpiar píxeles sueltos</label>
+    <label class="inline"><input id="bg" type="checkbox"> Quitar fondo (toca el resultado para elegir el color)</label>
     <label>Zoom de vista previa
       <select id="zoom"><option value="0">Auto</option><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option><option>32</option></select>
     </label>
@@ -133,6 +137,49 @@ function quantize(px,n){
   }
   for(const b of boxes){let r=0,g=0,l=0;for(const i of b){r+=px[i];g+=px[i+1];l+=px[i+2]}const k=b.length;r=Math.round(r/k);g=Math.round(g/k);l=Math.round(l/k);for(const i of b){px[i]=r;px[i+1]=g;px[i+2]=l}}
 }
+const PALS={gb:['0f380f','306230','8bac0f','9bbc0f'],pico:['000000','1d2b53','7e2553','008751','ab5236','5f574f','c2c3c7','fff1e8','ff004d','ffa300','ffec27','00e436','29adff','83769c','ff77a8','ffccaa'],sweet:['1a1c2c','5d275d','b13e53','ef7d57','ffcd75','a7f070','38b764','257179','29366f','3b5dc9','41a6f6','73eff7','f4f4f4','94b0c2','566c86','333c57']};
+function applyPalette(px,hexs){
+  const P=hexs.map(h=>[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]);
+  for(let i=0;i<px.length;i+=4){
+    if(px[i+3]===0)continue;
+    let b=0,bd=1e9;
+    for(let k=0;k<P.length;k++){const a=px[i]-P[k][0],g=px[i+1]-P[k][1],l=px[i+2]-P[k][2],d=a*a+g*g+l*l;if(d<bd){bd=d;b=k}}
+    px[i]=P[b][0];px[i+1]=P[b][1];px[i+2]=P[b][2];
+  }
+}
+// Un pixel sin ningun vecino parecido, rodeado de vecinos que si coinciden entre si, toma el color de ese grupo
+function despeckle(r,tol){
+  const {data:d,w,h}=r,src=d.slice(),T=tol*tol;
+  const dist=(a,b)=>{const x=src[a]-src[b],y=src[a+1]-src[b+1],z=src[a+2]-src[b+2];return x*x+y*y+z*z};
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const i=(y*w+x)*4;if(src[i+3]===0)continue;
+    const nb=[];
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+      if(!dx&&!dy)continue;const X=x+dx,Y=y+dy;if(X<0||Y<0||X>=w||Y>=h)continue;
+      const j=(Y*w+X)*4;if(src[j+3]!==0)nb.push(j);
+    }
+    if(nb.length<5||nb.some(j=>dist(i,j)<=T))continue;
+    let best=-1,bc=0;
+    for(const j of nb){let c=0;for(const k of nb)if(dist(j,k)<=T)c++;if(c>bc){bc=c;best=j}}
+    if(bc>=Math.ceil(nb.length*0.6)){d[i]=src[best];d[i+1]=src[best+1];d[i+2]=src[best+2]}
+  }
+}
+// Rellena desde la semilla: vuelve transparente la zona contigua de color parecido
+function floodBg(r,seed,tol){
+  const {data:d,w,h}=r,T=tol*tol,s=(seed[1]*w+seed[0])*4;
+  if(d[s+3]===0)return;
+  const c=[d[s],d[s+1],d[s+2]],seen=new Uint8Array(w*h),st=[seed[1]*w+seed[0]];seen[st[0]]=1;
+  while(st.length){
+    const p=st.pop();d[p*4+3]=0;const x=p%w,y=(p-x)/w;
+    for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+      const X=x+dx,Y=y+dy;if(X<0||Y<0||X>=w||Y>=h)continue;
+      const q=Y*w+X;if(seen[q])continue;seen[q]=1;
+      const j=q*4;if(d[j+3]===0)continue;
+      const a=d[j]-c[0],b=d[j+1]-c[1],e=d[j+2]-c[2];
+      if(a*a+b*b+e*e<=T)st.push(q);
+    }
+  }
+}
 /*ENDCORE*/
 
 const $=s=>document.querySelector(s);
@@ -157,8 +204,10 @@ function process(it){
   const xb=bounds(it.w,sx,ox+0.5+nx),yb=bounds(it.h,sy,oy+0.5+ny);
   it.xb=xb;it.yb=yb;
   const res=sample(it.px,it.w,it.h,xb,yb);
-  const n=parseInt($('#colors').value)||0;
-  if(n>0)quantize(res.data,n);
+  const pal=PALS[$('#pal').value],n=parseInt($('#colors').value)||0,tol=parseInt($('#tol').value)||0;
+  if(pal)applyPalette(res.data,pal);else if(n>0)quantize(res.data,n);
+  if($('#clean').checked)despeckle(res,tol);
+  if($('#bg').checked)floodBg(res,it.seed||[0,0],tol);
   it.res=res;it.cell=[sx,sy];
 }
 
@@ -204,7 +253,13 @@ function addCard(it){
   '<div class="actions"><button class="cp">Copiar al portapapeles</button><button class="d1 ghost">Descargar PNG 1x1</button><button class="dz"></button></div>';
   el.querySelector('strong').textContent=it.name;
   it.ocv=el.querySelector('.orig');
-  it.el=el;it.canvas=el.querySelector('canvas.res');it.info=el.querySelector('.info');it.dz=el.querySelector('.dz');
+  it.el=el;it.canvas=el.querySelector('canvas.res');
+  it.canvas.style.cursor='crosshair';
+  it.canvas.addEventListener('click',e=>{
+    if(!it.res)return;const r=it.canvas.getBoundingClientRect();
+    it.seed=[Math.min(it.res.w-1,Math.floor((e.clientX-r.left)/r.width*it.res.w)),Math.min(it.res.h-1,Math.floor((e.clientY-r.top)/r.height*it.res.h))];
+    $('#bg').checked=true;processAll();
+  });it.info=el.querySelector('.info');it.dz=el.querySelector('.dz');
   const base=it.name.replace(/\.[^.]+$/,'');
   el.querySelector('.d1').onclick=()=>save(it.canvas,base+'_1x1.png');
   el.querySelector('.cp').onclick=async()=>{try{const b=await new Promise(r=>it.canvas.toBlob(r,'image/png'));await navigator.clipboard.write([new ClipboardItem({'image/png':b})]);status.textContent='Copiada: pégala donde la necesites (Ctrl+V).'}catch(e){status.textContent='Tu navegador no permitió copiar; usa Descargar.'}};
@@ -241,6 +296,10 @@ $('#manual').addEventListener('change',()=>{$('#step').disabled=!$('#manual').ch
 $('#step').addEventListener('input',later);
 $('#colors').addEventListener('input',later);
 $('#tw').addEventListener('input',later);
+$('#pal').addEventListener('change',later);
+$('#tol').addEventListener('input',later);
+$('#clean').addEventListener('change',later);
+$('#bg').addEventListener('change',later);
 $('#offx').addEventListener('input',later);
 $('#offy').addEventListener('input',later);
 $('#grid').addEventListener('change',()=>items.forEach(it=>it.res&&drawOrig(it)));
