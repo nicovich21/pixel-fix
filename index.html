@@ -34,6 +34,11 @@ figcaption{font-size:.8rem;color:var(--muted);margin-bottom:6px}
 .res{image-rendering:pixelated;max-width:100%;height:auto;display:block;border-radius:2px;background:repeating-conic-gradient(var(--chk1) 0 25%,var(--chk2) 0 50%) 0 0/16px 16px}
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
 #status{color:var(--muted);font-size:.9rem;min-height:1.4em}
+.cmp{margin-top:12px}
+.cmpbox{position:relative;max-width:100%}
+.cmpbox canvas{display:block;width:100%;height:auto}
+.cmpbox .cb{position:absolute;left:0;top:0;height:100%}
+.cmpr{width:100%;margin-top:8px}
 </style>
 </head>
 <body>
@@ -218,7 +223,21 @@ function draw(it){
   const z=curZoom(it);
   c.style.width=(w*z)+'px';
   it.info.textContent=it.w+'×'+it.h+' → '+w+'×'+h+' px · celda ≈ '+fmt(it.cell[0])+' × '+fmt(it.cell[1])+' px';
-  it.dz.textContent='Descargar ampliado ×'+z;drawOrig(it);
+  it.dz.textContent='Descargar ampliado ×'+z;drawOrig(it);if(it.cmp&&!it.cmp.hidden)drawCmp(it);
+}
+
+function drawCmp(it){
+  const el=it.el,a=el.querySelector('.ca'),b=el.querySelector('.cb'),box=el.querySelector('.cmpbox'),rg=el.querySelector('.cmpr');
+  box.style.width='min(100%,'+it.w+'px)';
+  a.width=b.width=it.w;a.height=b.height=it.h;
+  a.getContext('2d').drawImage(it.img,0,0);
+  const g=b.getContext('2d'),{w,data}=it.res;
+  for(let j=0;j<it.yb.length-1;j++)for(let i=0;i<it.xb.length-1;i++){
+    const o=(j*w+i)*4;if(data[o+3]===0)continue;
+    g.fillStyle='rgb('+data[o]+','+data[o+1]+','+data[o+2]+')';
+    g.fillRect(it.xb[i],it.yb[j],it.xb[i+1]-it.xb[i],it.yb[j+1]-it.yb[j]);
+  }
+  b.style.clipPath='inset(0 0 0 '+rg.value+'%)';
 }
 
 function drawOrig(it){
@@ -250,7 +269,8 @@ function addCard(it){
   el.innerHTML='<header><strong></strong><span class="info"></span><button class="ghost x">Quitar</button></header>'+
   '<div class="cols"><figure><figcaption>Original</figcaption><canvas class="orig"></canvas></figure>'+
   '<figure><figcaption>Resultado con píxeles 1x1</figcaption><canvas class="res"></canvas></figure></div>'+
-  '<div class="actions"><button class="cp">Copiar al portapapeles</button><button class="d1 ghost">Descargar PNG 1x1</button><button class="dz"></button></div>';
+  '<div class="actions"><button class="cp">Copiar al portapapeles</button><button class="d1 ghost">Descargar PNG 1x1</button><button class="dz"></button><button class="ghost cmpbtn">Comparar antes y después</button></div>'+
+  '<div class="cmp" hidden><div class="cmpbox"><canvas class="ca"></canvas><canvas class="cb"></canvas></div><input class="cmpr" type="range" min="0" max="100" value="50" aria-label="Comparar antes y después"></div>';
   el.querySelector('strong').textContent=it.name;
   it.ocv=el.querySelector('.orig');
   it.el=el;it.canvas=el.querySelector('canvas.res');
@@ -265,6 +285,10 @@ function addCard(it){
   el.querySelector('.cp').onclick=async()=>{try{const b=await new Promise(r=>it.canvas.toBlob(r,'image/png'));await navigator.clipboard.write([new ClipboardItem({'image/png':b})]);status.textContent='Copiada: pégala donde la necesites (Ctrl+V).'}catch(e){status.textContent='Tu navegador no permitió copiar; usa Descargar.'}};
   it.dz.onclick=()=>{const z=curZoom(it),c=document.createElement('canvas');c.width=it.res.w*z;c.height=it.res.h*z;const g=c.getContext('2d');g.imageSmoothingEnabled=false;g.drawImage(it.canvas,0,0,c.width,c.height);save(c,base+'_x'+z+'.png')};
   el.querySelector('.x').onclick=()=>{items.splice(items.indexOf(it),1);URL.revokeObjectURL(it.url);el.remove()};
+  const cmp=el.querySelector('.cmp'),cmpb=el.querySelector('.cb'),rg=el.querySelector('.cmpr');
+  it.cmp=cmp;
+  el.querySelector('.cmpbtn').onclick=()=>{cmp.hidden=!cmp.hidden;if(!cmp.hidden)drawCmp(it)};
+  rg.oninput=()=>{cmpb.style.clipPath='inset(0 0 0 '+rg.value+'%)'};
   list.appendChild(el);
 }
 
@@ -305,6 +329,19 @@ $('#offy').addEventListener('input',later);
 $('#grid').addEventListener('change',()=>items.forEach(it=>it.res&&drawOrig(it)));
 document.addEventListener('paste',e=>{const fs=[...((e.clipboardData&&e.clipboardData.files)||[])];if(fs.length){e.preventDefault();addFiles(fs)}});
 $('#zoom').addEventListener('change',()=>items.forEach(it=>it.res&&draw(it)));
+
+// Recordar algunos ajustes entre visitas (si el navegador lo permite)
+const KEYS=['colors','pal','tol','zoom'],CK=['clean','grid'];
+try{
+  const sv=JSON.parse(localStorage.getItem('pixelfix:v1')||'{}');
+  KEYS.forEach(k=>{if(sv[k]!=null)$('#'+k).value=sv[k]});
+  CK.forEach(k=>{if(sv[k]!=null)$('#'+k).checked=sv[k]});
+}catch(e){}
+function saveOpts(){
+  try{const sv={};KEYS.forEach(k=>sv[k]=$('#'+k).value);CK.forEach(k=>sv[k]=$('#'+k).checked);localStorage.setItem('pixelfix:v1',JSON.stringify(sv))}catch(e){}
+}
+$('.opts').addEventListener('change',saveOpts);
+$('.opts').addEventListener('input',saveOpts);
 </script>
 </body>
 </html>
